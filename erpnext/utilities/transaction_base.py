@@ -19,8 +19,8 @@ class UOMMustBeIntegerError(frappe.ValidationError):
 
 class TransactionBase(StatusUpdater):
 	def validate_posting_time(self):
-		# set Edit Posting Date and Time to 1 while data import
-		if frappe.flags.in_import and self.posting_date:
+		# set Edit Posting Date and Time to 1 while data import and restore
+		if (frappe.flags.in_import or self.flags.from_restore) and self.posting_date:
 			self.set_posting_time = 1
 
 		if not getattr(self, "set_posting_time", None):
@@ -295,6 +295,9 @@ class TransactionBase(StatusUpdater):
 		# Server side 'item' doc. Update this to reflect in UI
 		item_obj = self.get("items", {"idx": item_idx})[0]
 
+		if not item_obj.item_code:
+			return
+
 		# 'item_details' has latest item related values
 		item_details = self.fetch_item_details(item_obj)
 
@@ -316,9 +319,12 @@ class TransactionBase(StatusUpdater):
 				setattr(item_obj, k, v)
 
 	def handle_internal_parties(self, item_obj: object, item_details: dict) -> None:
+		fetch_valuation_rate_for_internal_transaction = cint(
+			frappe.get_single_value("Accounts Settings", "fetch_valuation_rate_for_internal_transaction")
+		)
 		if (
 			self.get("is_internal_customer") or self.get("is_internal_supplier")
-		) and self.represents_company == self.company:
+		) and fetch_valuation_rate_for_internal_transaction:
 			args = frappe._dict(
 				{
 					"item_code": item_obj.item_code,

@@ -11,7 +11,28 @@ from frappe.model.document import Document
 from frappe.utils import cint
 
 from erpnext.accounts.utils import sync_auto_reconcile_config
-from erpnext.stock.utils import check_pending_reposting
+
+SELLING_DOCTYPES = [
+	"Sales Invoice",
+	"Sales Order",
+	"Delivery Note",
+	"Quotation",
+	"Sales Invoice Item",
+	"Sales Order Item",
+	"Delivery Note Item",
+	"Quotation Item",
+	"POS Invoice",
+	"POS Invoice Item",
+]
+
+BUYING_DOCTYPES = [
+	"Purchase Invoice",
+	"Purchase Order",
+	"Purchase Receipt",
+	"Purchase Invoice Item",
+	"Purchase Order Item",
+	"Purchase Receipt Item",
+]
 
 
 class AccountsSettings(Document):
@@ -23,7 +44,6 @@ class AccountsSettings(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		acc_frozen_upto: DF.Date | None
 		add_taxes_from_item_tax_template: DF.Check
 		add_taxes_from_taxes_and_charges_template: DF.Check
 		allow_multi_currency_invoices_against_single_party_account: DF.Check
@@ -42,14 +62,18 @@ class AccountsSettings(Document):
 		confirm_before_resetting_posting_date: DF.Check
 		create_pr_in_draft_status: DF.Check
 		credit_controller: DF.Link | None
+		default_ageing_range: DF.Data | None
 		delete_linked_ledger_entries: DF.Check
 		determine_address_tax_category_from: DF.Literal["Billing Address", "Shipping Address"]
+		enable_accounting_dimensions: DF.Check
 		enable_common_party_accounting: DF.Check
+		enable_discounts_and_margin: DF.Check
 		enable_fuzzy_matching: DF.Check
 		enable_immutable_ledger: DF.Check
+		enable_loyalty_point_program: DF.Check
 		enable_party_matching: DF.Check
 		exchange_gain_loss_posting_date: DF.Literal["Invoice", "Payment", "Reconciliation Date"]
-		frozen_accounts_modifier: DF.Link | None
+		fetch_valuation_rate_for_internal_transaction: DF.Check
 		general_ledger_remarks_length: DF.Int
 		ignore_account_closing_balance: DF.Check
 		ignore_is_opening_check_for_reporting: DF.Check
@@ -58,11 +82,11 @@ class AccountsSettings(Document):
 		make_payment_via_journal_entry: DF.Check
 		merge_similar_account_heads: DF.Check
 		over_billing_allowance: DF.Currency
-		post_change_gl_entries: DF.Check
 		receivable_payable_fetch_method: DF.Literal["Buffered Cursor", "UnBuffered Cursor", "Raw SQL"]
 		receivable_payable_remarks_length: DF.Int
 		reconciliation_queue_size: DF.Int
 		role_allowed_to_over_bill: DF.Link | None
+		role_to_notify_on_depreciation_failure: DF.Link | None
 		role_to_override_stop_action: DF.Link | None
 		round_row_wise_tax: DF.Check
 		show_balance_in_coa: DF.Check
@@ -73,7 +97,8 @@ class AccountsSettings(Document):
 		submit_journal_entries: DF.Check
 		unlink_advance_payment_on_cancelation_of_order: DF.Check
 		unlink_payment_on_cancellation_of_invoice: DF.Check
-		use_new_budget_controller: DF.Check
+		use_legacy_budget_controller: DF.Check
+		use_legacy_controller_for_pcv: DF.Check
 	# end: auto-generated types
 
 	def validate(self):
@@ -98,8 +123,17 @@ class AccountsSettings(Document):
 		if old_doc.show_payment_schedule_in_print != self.show_payment_schedule_in_print:
 			self.enable_payment_schedule_in_print()
 
-		if old_doc.acc_frozen_upto != self.acc_frozen_upto:
-			self.validate_pending_reposts()
+		if old_doc.enable_accounting_dimensions != self.enable_accounting_dimensions:
+			toggle_accounting_dimension_sections(not self.enable_accounting_dimensions)
+			clear_cache = True
+
+		if old_doc.enable_discounts_and_margin != self.enable_discounts_and_margin:
+			toggle_sales_discount_section(not self.enable_discounts_and_margin)
+			clear_cache = True
+
+		if old_doc.enable_loyalty_point_program != self.enable_loyalty_point_program:
+			toggle_loyalty_point_program_section(not self.enable_loyalty_point_program)
+			clear_cache = True
 
 		if clear_cache:
 			frappe.clear_cache()
@@ -126,10 +160,6 @@ class AccountsSettings(Document):
 				"Check",
 				validate_fields_for_doctype=False,
 			)
-
-	def validate_pending_reposts(self):
-		if self.acc_frozen_upto:
-			check_pending_reposting(self.acc_frozen_upto)
 
 	def validate_and_sync_auto_reconcile_config(self):
 		if self.has_value_changed("auto_reconciliation_job_trigger"):
@@ -159,6 +189,38 @@ class AccountsSettings(Document):
 	def drop_ar_sql_procedures(self):
 		from erpnext.accounts.report.accounts_receivable.accounts_receivable import InitSQLProceduresForAR
 
-		frappe.db.sql(f"drop function if exists {InitSQLProceduresForAR.genkey_function_name}")
 		frappe.db.sql(f"drop procedure if exists {InitSQLProceduresForAR.init_procedure_name}")
 		frappe.db.sql(f"drop procedure if exists {InitSQLProceduresForAR.allocate_procedure_name}")
+
+
+def toggle_accounting_dimension_sections(hide):
+	accounting_dimension_doctypes = frappe.get_hooks("accounting_dimension_doctypes")
+	for doctype in accounting_dimension_doctypes:
+		create_property_setter_for_hiding_field(doctype, "accounting_dimensions_section", hide)
+
+
+def toggle_sales_discount_section(hide):
+	for doctype in SELLING_DOCTYPES + BUYING_DOCTYPES:
+		meta = frappe.get_meta(doctype)
+		if meta.has_field("additional_discount_section"):
+			create_property_setter_for_hiding_field(doctype, "additional_discount_section", hide)
+		if meta.has_field("discount_and_margin"):
+			create_property_setter_for_hiding_field(doctype, "discount_and_margin", hide)
+
+
+def toggle_loyalty_point_program_section(hide):
+	for doctype in SELLING_DOCTYPES:
+		meta = frappe.get_meta(doctype)
+		if meta.has_field("loyalty_points_redemption"):
+			create_property_setter_for_hiding_field(doctype, "loyalty_points_redemption", hide)
+
+
+def create_property_setter_for_hiding_field(doctype, field_name, hide):
+	make_property_setter(
+		doctype,
+		field_name,
+		"hidden",
+		hide,
+		"Check",
+		validate_fields_for_doctype=False,
+	)

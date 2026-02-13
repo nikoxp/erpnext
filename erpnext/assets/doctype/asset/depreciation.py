@@ -96,33 +96,34 @@ def get_depreciable_assets_data(date):
 		.orderby(a.creation, order=Order.desc)
 	)
 
-	acc_frozen_upto = get_acc_frozen_upto()
-	if acc_frozen_upto:
-		res = res.where(ds.schedule_date > acc_frozen_upto)
+	companies_with_frozen_limits = get_companies_with_frozen_limits()
 
-	res = res.run()
+	for company, frozen_upto in companies_with_frozen_limits.items():
+		res = res.where((a.company != company) | (ds.schedule_date > frozen_upto))
 
-	return res
+	return res.run()
+
+
+def get_companies_with_frozen_limits():
+	companies_with_frozen_limits = {}
+	for d in frappe.get_all(
+		"Company", fields=["name", "accounts_frozen_till_date", "role_allowed_for_frozen_entries"]
+	):
+		if not d.accounts_frozen_till_date:
+			continue
+
+		if (
+			d.role_allowed_for_frozen_entries not in frappe.get_roles()
+			and frappe.session.user != "Administrator"
+		):
+			companies_with_frozen_limits[d.name] = getdate(d.accounts_frozen_till_date)
+	return companies_with_frozen_limits
 
 
 def make_depreciation_entry_on_disposal(asset_doc, disposal_date=None):
 	for row in asset_doc.get("finance_books"):
 		depr_schedule_name = get_asset_depr_schedule_name(asset_doc.name, "Active", row.finance_book)
 		make_depreciation_entry(depr_schedule_name, disposal_date)
-
-
-def get_acc_frozen_upto():
-	acc_frozen_upto = frappe.get_single_value("Accounts Settings", "acc_frozen_upto")
-
-	if not acc_frozen_upto:
-		return
-
-	frozen_accounts_modifier = frappe.get_single_value("Accounts Settings", "frozen_accounts_modifier")
-
-	if frozen_accounts_modifier not in frappe.get_roles() or frappe.session.user == "Administrator":
-		return getdate(acc_frozen_upto)
-
-	return
 
 
 def get_credit_debit_accounts_for_asset(asset_category, company):
@@ -245,11 +246,15 @@ def _make_journal_entry_for_depreciation(
 
 def setup_journal_entry_metadata(je, depr_schedule_doc, depr_series, depr_schedule, asset):
 	je.voucher_type = "Depreciation Entry"
-	je.naming_series = depr_series
+	if depr_series:
+		je.naming_series = depr_series
+
 	je.posting_date = depr_schedule.schedule_date
 	je.company = asset.company
 	je.finance_book = depr_schedule_doc.finance_book
-	je.remark = f"Depreciation Entry against {asset.name} worth {depr_schedule.depreciation_amount}"
+	je.remark = _("Depreciation Entry against {0} worth {1}").format(
+		asset.name, depr_schedule.depreciation_amount
+	)
 
 
 def get_credit_and_debit_entry(
@@ -305,7 +310,8 @@ def set_depr_entry_posting_status_for_failed_assets(failed_asset_names):
 
 
 def notify_depr_entry_posting_error(failed_asset_names, error_log_names):
-	recipients = get_users_with_role("Accounts Manager")
+	user_role = frappe.db.get_single_value("Accounts Settings", "role_to_notify_on_depreciation_failure")
+	recipients = get_users_with_role(user_role or "Accounts Manager")
 
 	if not recipients:
 		recipients = get_users_with_role("System Manager")
@@ -587,8 +593,8 @@ def get_gl_entries_on_asset_regain(
 		asset.get_gl_dict(
 			{
 				"account": fixed_asset_account,
-				"debit_in_account_currency": asset.gross_purchase_amount,
-				"debit": asset.gross_purchase_amount,
+				"debit_in_account_currency": asset.net_purchase_amount,
+				"debit": asset.net_purchase_amount,
 				"cost_center": depreciation_cost_center,
 				"posting_date": date,
 			},
@@ -640,8 +646,8 @@ def get_gl_entries_on_asset_disposal(
 		asset.get_gl_dict(
 			{
 				"account": fixed_asset_account,
-				"credit_in_account_currency": asset.gross_purchase_amount,
-				"credit": asset.gross_purchase_amount,
+				"credit_in_account_currency": asset.net_purchase_amount,
+				"credit": asset.net_purchase_amount,
 				"cost_center": depreciation_cost_center,
 				"posting_date": date,
 			},
@@ -679,7 +685,7 @@ def get_gl_entries_on_asset_disposal(
 
 def get_asset_details(asset, finance_book=None):
 	value_after_depreciation = asset.get_value_after_depreciation(finance_book)
-	accumulated_depr_amount = flt(asset.gross_purchase_amount) - flt(value_after_depreciation)
+	accumulated_depr_amount = flt(asset.net_purchase_amount) - flt(value_after_depreciation)
 
 	fixed_asset_account, accumulated_depr_account, _ = get_depreciation_accounts(
 		asset.asset_category, asset.company
@@ -780,17 +786,21 @@ def get_disposal_account_and_cost_center(company):
 
 
 @frappe.whitelist()
-def get_value_after_depreciation_on_disposal_date(asset, disposal_date, finance_book=None):
+def get_value_after_depreciation_on_disposal_date(
+	asset: str,
+	disposal_date: str,
+	finance_book: str | None = None,
+) -> float:
 	asset_doc = frappe.get_doc("Asset", asset)
 
-	if asset_doc.is_composite_component:
+	if asset_doc.asset_type == "Composite Component":
 		validate_disposal_date(asset_doc.purchase_date, getdate(disposal_date), "purchase")
 		return flt(asset_doc.value_after_depreciation)
 
 	validate_disposal_date(asset_doc.available_for_use_date, getdate(disposal_date), "available for use")
 
 	if asset_doc.available_for_use_date == getdate(disposal_date):
-		return flt(asset_doc.gross_purchase_amount - asset_doc.opening_accumulated_depreciation)
+		return flt(asset_doc.net_purchase_amount - asset_doc.opening_accumulated_depreciation)
 
 	if not asset_doc.calculate_depreciation:
 		return flt(asset_doc.value_after_depreciation)
@@ -811,8 +821,8 @@ def get_value_after_depreciation_on_disposal_date(asset, disposal_date, finance_
 	].accumulated_depreciation_amount
 
 	return flt(
-		flt(asset_doc.gross_purchase_amount) - accumulated_depr_amount,
-		asset_doc.precision("gross_purchase_amount"),
+		flt(asset_doc.net_purchase_amount) - accumulated_depr_amount,
+		asset_doc.precision("net_purchase_amount"),
 	)
 
 

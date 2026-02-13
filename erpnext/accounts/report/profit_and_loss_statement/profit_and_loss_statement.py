@@ -6,6 +6,9 @@ import frappe
 from frappe import _
 from frappe.utils import flt
 
+from erpnext.accounts.doctype.financial_report_template.financial_report_engine import (
+	FinancialReportEngine,
+)
 from erpnext.accounts.report.financial_statements import (
 	compute_growth_view_data,
 	compute_margin_view_data,
@@ -17,6 +20,9 @@ from erpnext.accounts.report.financial_statements import (
 
 
 def execute(filters=None):
+	if filters and filters.report_template:
+		return FinancialReportEngine().execute(filters)
+
 	period_list = get_period_list(
 		filters.from_fiscal_year,
 		filters.to_fiscal_year,
@@ -117,9 +123,7 @@ def get_report_summary(
 
 	return [
 		{"value": net_income, "label": income_label, "datatype": "Currency", "currency": currency},
-		{"type": "separator", "value": "-"},
 		{"value": net_expense, "label": expense_label, "datatype": "Currency", "currency": currency},
-		{"type": "separator", "value": "=", "color": "blue"},
 		{
 			"value": net_profit,
 			"indicator": "Green" if net_profit > 0 else "Red",
@@ -159,11 +163,11 @@ def get_net_profit_loss(income, expense, period_list, company, currency=None, co
 
 
 def get_chart_data(filters, columns, income, expense, net_profit_loss, currency):
-	labels = [d.get("label") for d in columns[2:]]
+	labels = [d.get("label") for d in columns[4:]]
 
 	income_data, expense_data, net_profit = [], [], []
 
-	for p in columns[2:]:
+	for p in columns[4:]:
 		if income:
 			income_data.append(income[-2].get(p.get("fieldname")))
 		if expense:

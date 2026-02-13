@@ -163,7 +163,7 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 		}
 
 		if (this.item?.type_of_transaction === "Outward") {
-			fields = [...this.get_filter_fields(), ...fields];
+			fields = [...this.get_filter_fields(), ...fields, ...this.get_attach_field()];
 		} else {
 			fields = [...fields, ...this.get_attach_field()];
 		}
@@ -195,7 +195,7 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 		}
 
 		let fields = [];
-		if (this.item.has_serial_no) {
+		if (this.item.has_serial_no && this.item?.type_of_transaction !== "Outward") {
 			fields.push({
 				fieldtype: "Check",
 				label: __("Enter Manually"),
@@ -217,7 +217,8 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 				label: __("Import Using CSV file"),
 				fieldname: "import_using_csv_file",
 				depends_on: "eval:doc.enter_manually !== 1",
-				default: !this.item.has_serial_no ? 1 : 0,
+				default: !this.item.has_serial_no || this.item?.type_of_transaction === "Outward" ? 1 : 0,
+				hidden: this.item?.type_of_transaction === "Outward",
 				change() {
 					if (me.dialog.get_value("import_using_csv_file")) {
 						me.dialog.set_value("enter_manually", 0);
@@ -246,7 +247,7 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 			},
 		];
 
-		if (this.item?.has_serial_no) {
+		if (this.item?.has_serial_no && this.item?.type_of_transaction !== "Outward") {
 			fields = [
 				...fields,
 				{
@@ -267,7 +268,7 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 			];
 		}
 
-		if (this.item?.has_serial_no) {
+		if (this.item?.has_serial_no && this.item?.type_of_transaction !== "Outward") {
 			fields = [
 				...fields,
 				{
@@ -457,7 +458,8 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 							(["Purchase Receipt", "Purchase Invoice"].includes(this.frm.doc.doctype) &&
 								!this.frm.doc.is_return) ||
 							(this.frm.doc.doctype === "Stock Entry" &&
-								this.frm.doc.purpose === "Material Receipt")
+								(this.frm.doc.purpose === "Material Receipt" ||
+									(this.frm.doc.purpose === "Manufacture" && this.item.is_finished_item)))
 						) {
 							is_inward = true;
 						}
@@ -542,6 +544,7 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 					based_on: based_on,
 					posting_date: this.frm.doc.posting_date,
 					posting_time: this.frm.doc.posting_time,
+					scio_detail: this.item.scio_detail,
 				},
 				callback: (r) => {
 					if (r.message) {

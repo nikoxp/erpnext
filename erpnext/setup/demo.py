@@ -75,7 +75,7 @@ def create_demo_company():
 	frappe.db.set_single_value("Global Defaults", "demo_company", new_company.name)
 	frappe.db.set_default("company", new_company.name)
 
-	bank_account = create_bank_account({"company_name": new_company.name})
+	bank_account = create_bank_account({"company_name": new_company.name}, demo=True)
 	frappe.db.set_value("Company", new_company.name, "default_bank_account", bank_account.name)
 
 	return new_company.name
@@ -182,6 +182,10 @@ def create_transaction_deletion_record(company):
 	transaction_deletion_record.company = company
 	transaction_deletion_record.process_in_single_transaction = True
 	transaction_deletion_record.save(ignore_permissions=True)
+
+	transaction_deletion_record.generate_to_delete_list()
+	transaction_deletion_record.reload()
+
 	transaction_deletion_record.submit()
 	transaction_deletion_record.start_deletion_tasks()
 

@@ -69,12 +69,18 @@ class PartyLedgerSummaryReport:
 		party_type = self.filters.party_type
 
 		doctype = qb.DocType(party_type)
+
+		party_details_fields = [
+			doctype.name.as_("party"),
+			f"{scrub(party_type)}_name",
+			f"{scrub(party_type)}_group",
+		]
+
+		if party_type == "Customer":
+			party_details_fields.append(doctype.territory)
+
 		conditions = self.get_party_conditions(doctype)
-		query = (
-			qb.from_(doctype)
-			.select(doctype.name.as_("party"), f"{scrub(party_type)}_name")
-			.where(Criterion.all(conditions))
-		)
+		query = qb.from_(doctype).select(*party_details_fields).where(Criterion.all(conditions))
 
 		from frappe.desk.reportview import build_match_conditions
 
@@ -153,6 +159,31 @@ class PartyLedgerSummaryReport:
 
 		credit_or_debit_note = "Credit Note" if self.filters.party_type == "Customer" else "Debit Note"
 
+		if self.filters.party_type == "Customer":
+			columns += [
+				{
+					"label": _("Customer Group"),
+					"fieldname": "customer_group",
+					"fieldtype": "Link",
+					"options": "Customer Group",
+				},
+				{
+					"label": _("Territory"),
+					"fieldname": "territory",
+					"fieldtype": "Link",
+					"options": "Territory",
+				},
+			]
+		else:
+			columns += [
+				{
+					"label": _("Supplier Group"),
+					"fieldname": "supplier_group",
+					"fieldtype": "Link",
+					"options": "Supplier Group",
+				}
+			]
+
 		columns += [
 			{
 				"label": _("Opening Balance"),
@@ -214,35 +245,6 @@ class PartyLedgerSummaryReport:
 			},
 		]
 
-		# Hidden columns for handling 'User Permissions'
-		if self.filters.party_type == "Customer":
-			columns += [
-				{
-					"label": _("Territory"),
-					"fieldname": "territory",
-					"fieldtype": "Link",
-					"options": "Territory",
-					"hidden": 1,
-				},
-				{
-					"label": _("Customer Group"),
-					"fieldname": "customer_group",
-					"fieldtype": "Link",
-					"options": "Customer Group",
-					"hidden": 1,
-				},
-			]
-		else:
-			columns += [
-				{
-					"label": _("Supplier Group"),
-					"fieldname": "supplier_group",
-					"fieldtype": "Link",
-					"options": "Supplier Group",
-					"hidden": 1,
-				}
-			]
-
 		columns.append({"label": _("Dr/Cr"), "fieldname": "dr_or_cr", "fieldtype": "Data", "width": 100})
 		return columns
 
@@ -277,12 +279,25 @@ class PartyLedgerSummaryReport:
 			if gle.posting_date < self.filters.from_date or gle.is_opening == "Yes":
 				self.party_data[gle.party].opening_balance += amount
 			else:
-				if amount > 0:
-					self.party_data[gle.party].invoiced_amount += amount
-				elif gle.voucher_no in self.return_invoices:
-					self.party_data[gle.party].return_amount -= amount
+				# Cache the party data reference to avoid repeated dictionary lookups
+				party_data = self.party_data[gle.party]
+
+				# Check if this is a direct return invoice (most specific condition first)
+				if gle.voucher_no in self.return_invoices:
+					party_data.return_amount -= amount
+				# Check if this entry is against a return invoice
+				elif gle.against_voucher in self.return_invoices:
+					# For entries against return invoices, positive amounts are payments
+					if amount > 0:
+						party_data.paid_amount -= amount
+					else:
+						party_data.invoiced_amount += amount
+				# Normal transaction logic
 				else:
-					self.party_data[gle.party].paid_amount -= amount
+					if amount > 0:
+						party_data.invoiced_amount += amount
+					else:
+						party_data.paid_amount -= amount
 
 		out = []
 		for party, row in self.party_data.items():
@@ -291,7 +306,7 @@ class PartyLedgerSummaryReport:
 				or row.invoiced_amount
 				or row.paid_amount
 				or row.return_amount
-				or row.closing_amount
+				or row.closing_balance  # Fixed typo from closing_amount to closing_balance
 			):
 				total_party_adjustment = sum(
 					amount for amount in self.party_adjustment_details.get(party, {}).values()
@@ -322,6 +337,7 @@ class PartyLedgerSummaryReport:
 				gle.party,
 				gle.voucher_type,
 				gle.voucher_no,
+				gle.against_voucher,  # For handling returned invoices (Credit/Debit Notes)
 				gle.debit,
 				gle.credit,
 				gle.is_opening,

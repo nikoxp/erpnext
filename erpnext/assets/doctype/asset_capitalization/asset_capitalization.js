@@ -17,10 +17,7 @@ erpnext.assets.AssetCapitalization = class AssetCapitalization extends erpnext.s
 	refresh() {
 		this.show_general_ledger();
 
-		if (
-			(this.frm.doc.stock_items && this.frm.doc.stock_items.length) ||
-			!this.frm.doc.target_is_fixed_asset
-		) {
+		if (this.frm.doc.stock_items && this.frm.doc.stock_items.length) {
 			this.show_stock_ledger();
 		}
 
@@ -41,7 +38,7 @@ erpnext.assets.AssetCapitalization = class AssetCapitalization extends erpnext.s
 
 		me.frm.set_query("target_asset", function () {
 			return {
-				filters: { is_composite_asset: 1, docstatus: 0 },
+				filters: { asset_type: "Composite Asset", docstatus: 0 },
 			};
 		});
 
@@ -194,6 +191,13 @@ erpnext.assets.AssetCapitalization = class AssetCapitalization extends erpnext.s
 		}
 	}
 
+	serial_and_batch_bundle(doc, cdt, cdn) {
+		var row = frappe.get_doc(cdt, cdn);
+		if (cdt === "Asset Capitalization Stock Item") {
+			this.get_warehouse_details(row);
+		}
+	}
+
 	asset(doc, cdt, cdn) {
 		var row = frappe.get_doc(cdt, cdn);
 		if (cdt === "Asset Capitalization Asset Item") {
@@ -230,10 +234,6 @@ erpnext.assets.AssetCapitalization = class AssetCapitalization extends erpnext.s
 	}
 
 	qty() {
-		this.calculate_totals();
-	}
-
-	target_qty() {
 		this.calculate_totals();
 	}
 
@@ -407,6 +407,7 @@ erpnext.assets.AssetCapitalization = class AssetCapitalization extends erpnext.s
 						voucher_type: me.frm.doc.doctype,
 						voucher_no: me.frm.doc.name,
 						allow_zero_valuation: 1,
+						serial_and_batch_bundle: item.serial_and_batch_bundle,
 					},
 				},
 				callback: function (r) {
@@ -477,10 +478,7 @@ erpnext.assets.AssetCapitalization = class AssetCapitalization extends erpnext.s
 			me.frm.doc.stock_items_total + me.frm.doc.asset_items_total + me.frm.doc.service_items_total;
 		me.frm.doc.total_value = flt(me.frm.doc.total_value, precision("total_value"));
 
-		me.frm.doc.target_qty = flt(me.frm.doc.target_qty, precision("target_qty"));
-		me.frm.doc.target_incoming_rate = me.frm.doc.target_qty
-			? me.frm.doc.total_value / flt(me.frm.doc.target_qty)
-			: me.frm.doc.total_value;
+		me.frm.doc.target_incoming_rate = me.frm.doc.total_value;
 
 		me.frm.refresh_fields();
 	}

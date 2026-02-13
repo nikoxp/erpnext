@@ -15,9 +15,10 @@ from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import g
 from erpnext.accounts.doctype.budget.budget import validate_expense_against_budget
 from erpnext.accounts.party import get_party_details
 from erpnext.buying.utils import update_last_purchase_rate, validate_for_items
+from erpnext.controllers.accounts_controller import get_taxes_and_charges
 from erpnext.controllers.sales_and_purchase_return import get_rate_for_return
 from erpnext.controllers.subcontracting_controller import SubcontractingController
-from erpnext.stock.get_item_details import get_conversion_factor
+from erpnext.stock.get_item_details import get_conversion_factor, get_item_defaults
 from erpnext.stock.utils import get_incoming_rate
 
 
@@ -50,7 +51,7 @@ class BuyingController(SubcontractingController):
 			self.validate_purchase_receipt_if_update_stock()
 
 		if self.doctype == "Purchase Receipt" or (self.doctype == "Purchase Invoice" and self.update_stock):
-			# self.validate_purchase_return()
+			self.validate_purchase_return()
 			self.validate_rejected_warehouse()
 			self.validate_accepted_rejected_qty()
 			validate_for_items(self)
@@ -79,6 +80,19 @@ class BuyingController(SubcontractingController):
 					"Stock Settings", "allow_to_make_quality_inspection_after_purchase_or_delivery"
 				),
 			)
+
+		if (
+			self.get("company")
+			and (
+				default_buying_terms := frappe.get_value(
+					"Company", self.get("company"), "default_buying_terms"
+				)
+			)
+			and not self.get("tc_name")
+			and not self.get("terms")
+		):
+			self.tc_name = default_buying_terms
+			self.terms = frappe.get_value("Terms and Conditions", self.get("tc_name"), "terms")
 
 	def validate_posting_date_with_po(self):
 		po_list = {x.purchase_order for x in self.items if x.purchase_order}
@@ -216,6 +230,12 @@ class BuyingController(SubcontractingController):
 
 		self.set_missing_item_details(for_validate)
 
+		if self.meta.get_field("taxes"):
+			if self.get("taxes_and_charges") and not self.get("taxes") and not for_validate:
+				taxes = get_taxes_and_charges("Purchase Taxes and Charges Template", self.taxes_and_charges)
+				for tax in taxes:
+					self.append("taxes", tax)
+
 	def set_supplier_from_item_default(self):
 		if self.meta.get_field("supplier") and not self.supplier:
 			for d in self.get("items"):
@@ -307,6 +327,60 @@ class BuyingController(SubcontractingController):
 					address_display_field, render_address(self.get(address_field), check_permissions=False)
 				)
 
+	def set_gl_entry_for_purchase_expense(self, gl_entries):
+		if self.doctype == "Purchase Invoice" and not self.update_stock:
+			return
+
+		for row in self.items:
+			details = get_purchase_expense_account(row.item_code, self.company)
+
+			if not details.purchase_expense_account:
+				details.purchase_expense_account = frappe.get_cached_value(
+					"Company", self.company, "purchase_expense_account"
+				)
+
+			if not details.purchase_expense_account:
+				return
+
+			if not details.purchase_expense_contra_account:
+				details.purchase_expense_contra_account = frappe.get_cached_value(
+					"Company", self.company, "purchase_expense_contra_account"
+				)
+
+			if not details.purchase_expense_contra_account:
+				frappe.throw(
+					_("Please set Purchase Expense Contra Account in Company {0}").format(self.company)
+				)
+
+			amount = flt(row.valuation_rate * row.stock_qty, row.precision("base_amount"))
+			self.add_gl_entry(
+				gl_entries=gl_entries,
+				account=details.purchase_expense_account,
+				cost_center=row.cost_center,
+				debit=amount,
+				credit=0.0,
+				remarks=_("Purchase Expense for Item {0}").format(row.item_code),
+				against_account=details.purchase_expense_contra_account,
+				account_currency=frappe.get_cached_value(
+					"Account", details.purchase_expense_account, "account_currency"
+				),
+				item=row,
+			)
+
+			self.add_gl_entry(
+				gl_entries=gl_entries,
+				account=details.purchase_expense_contra_account,
+				cost_center=row.cost_center,
+				debit=0.0,
+				credit=amount,
+				remarks=_("Purchase Expense for Item {0}").format(row.item_code),
+				against_account=details.purchase_expense_account,
+				account_currency=frappe.get_cached_value(
+					"Account", details.purchase_expense_contra_account, "account_currency"
+				),
+				item=row,
+			)
+
 	def set_total_in_words(self):
 		from frappe.utils import money_in_words
 
@@ -348,7 +422,7 @@ class BuyingController(SubcontractingController):
 		tax_accounts, total_valuation_amount, total_actual_tax_amount = self.get_tax_details()
 
 		for i, item in enumerate(self.get("items")):
-			if item.item_code and item.qty:
+			if item.item_code and (item.qty or item.get("rejected_qty")):
 				item_tax_amount, actual_tax_amount = 0.0, 0.0
 				if i == (last_item_idx - 1):
 					item_tax_amount = total_valuation_amount
@@ -387,7 +461,19 @@ class BuyingController(SubcontractingController):
 				if item.sales_incoming_rate:  # for internal transfer
 					net_rate = item.qty * item.sales_incoming_rate
 
+				if (
+					not net_rate
+					and item.get("rejected_qty")
+					and frappe.get_single_value(
+						"Buying Settings", "set_valuation_rate_for_rejected_materials"
+					)
+				):
+					net_rate = item.rejected_qty * item.net_rate
+
 				qty_in_stock_uom = flt(item.qty * item.conversion_factor)
+				if not qty_in_stock_uom and item.get("rejected_qty"):
+					qty_in_stock_uom = flt(item.rejected_qty * item.conversion_factor)
+
 				if self.get("is_old_subcontracting_flow"):
 					item.rm_supp_cost = self.get_supplied_items_cost(item.name, reset_outgoing_rate)
 					item.valuation_rate = (
@@ -596,15 +682,8 @@ class BuyingController(SubcontractingController):
 
 	def validate_purchase_return(self):
 		for d in self.get("items"):
-			if self.is_return and flt(d.rejected_qty) != 0:
-				frappe.throw(
-					_("Row #{idx}: {field_label} is not allowed in Purchase Return.").format(
-						idx=d.idx,
-						field_label=_(d.meta.get_label("rejected_qty")),
-					)
-				)
-
-			# validate rate with ref PR
+			if self.is_return and not flt(d.rejected_qty) and d.rejected_warehouse:
+				d.rejected_warehouse = None
 
 	# validate accepted and rejected qty
 	def validate_accepted_rejected_qty(self):
@@ -863,7 +942,7 @@ class BuyingController(SubcontractingController):
 			self.update_fixed_asset(field, delete_asset=True)
 
 	def validate_budget(self):
-		if frappe.get_single_value("Accounts Settings", "use_new_budget_controller"):
+		if not frappe.get_single_value("Accounts Settings", "use_legacy_budget_controller"):
 			from erpnext.controllers.budget_controller import BudgetValidation
 
 			val = BudgetValidation(doc=self)
@@ -982,11 +1061,12 @@ class BuyingController(SubcontractingController):
 				"asset_category": item_data.get("asset_category"),
 				"location": row.asset_location,
 				"company": self.company,
+				"status": "Draft",
 				"supplier": self.supplier,
 				"purchase_date": self.posting_date,
 				"calculate_depreciation": 0,
 				"purchase_amount": purchase_amount,
-				"gross_purchase_amount": purchase_amount,
+				"net_purchase_amount": purchase_amount,
 				"asset_quantity": asset_quantity,
 				"purchase_receipt": self.name if self.doctype == "Purchase Receipt" else None,
 				"purchase_invoice": self.name if self.doctype == "Purchase Invoice" else None,
@@ -1159,3 +1239,33 @@ def validate_item_type(doc, fieldname, message):
 @erpnext.allow_regional
 def update_regional_item_valuation_rate(doc):
 	pass
+
+
+@frappe.request_cache
+def get_purchase_expense_account(item_code, company):
+	defaults = get_item_defaults(item_code, company)
+
+	details = frappe._dict(
+		{
+			"purchase_expense_account": defaults.get("purchase_expense_account"),
+			"purchase_expense_contra_account": defaults.get("purchase_expense_contra_account"),
+		}
+	)
+
+	if not details.purchase_expense_account:
+		details = frappe.db.get_value(
+			"Item Default",
+			{"parent": defaults.item_group, "company": company},
+			["purchase_expense_account", "purchase_expense_contra_account"],
+			as_dict=1,
+		) or frappe._dict({})
+
+	if not details.purchase_expense_account:
+		details = frappe.db.get_value(
+			"Item Default",
+			{"parent": defaults.brand, "company": company},
+			["purchase_expense_account", "purchase_expense_contra_account"],
+			as_dict=1,
+		)
+
+	return details or frappe._dict({})

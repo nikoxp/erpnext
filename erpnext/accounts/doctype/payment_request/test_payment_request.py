@@ -2,7 +2,6 @@
 # See license.txt
 
 import re
-import unittest
 from unittest.mock import patch
 
 import frappe
@@ -34,12 +33,14 @@ payment_method = [
 		"payment_gateway": "_Test Gateway",
 		"payment_account": "_Test Bank - _TC",
 		"currency": "INR",
+		"company": "_Test Company",
 	},
 	{
 		"doctype": "Payment Gateway Account",
 		"payment_gateway": "_Test Gateway",
 		"payment_account": "_Test Bank USD - _TC",
 		"currency": "USD",
+		"company": "_Test Company",
 	},
 	{
 		"doctype": "Payment Gateway Account",
@@ -47,6 +48,7 @@ payment_method = [
 		"payment_account": "_Test Bank USD - _TC",
 		"payment_channel": "Other",
 		"currency": "USD",
+		"company": "_Test Company",
 	},
 	{
 		"doctype": "Payment Gateway Account",
@@ -54,6 +56,7 @@ payment_method = [
 		"payment_account": "_Test Bank USD - _TC",
 		"payment_channel": "Phone",
 		"currency": "USD",
+		"company": "_Test Company",
 	},
 ]
 
@@ -67,7 +70,11 @@ class TestPaymentRequest(IntegrationTestCase):
 		for method in payment_method:
 			if not frappe.db.get_value(
 				"Payment Gateway Account",
-				{"payment_gateway": method["payment_gateway"], "currency": method["currency"]},
+				{
+					"payment_gateway": method["payment_gateway"],
+					"currency": method["currency"],
+					"company": method["company"],
+				},
 				"name",
 			):
 				frappe.get_doc(method).insert(ignore_permissions=True)
@@ -103,7 +110,7 @@ class TestPaymentRequest(IntegrationTestCase):
 			dt="Sales Order",
 			dn=so_inr.name,
 			recipient_id="saurabh@erpnext.com",
-			payment_gateway_account="_Test Gateway - INR",
+			payment_gateway_account="_Test Gateway - INR - _TC",
 		)
 
 		self.assertEqual(pr.reference_doctype, "Sales Order")
@@ -117,7 +124,7 @@ class TestPaymentRequest(IntegrationTestCase):
 			dt="Sales Invoice",
 			dn=si_usd.name,
 			recipient_id="saurabh@erpnext.com",
-			payment_gateway_account="_Test Gateway - USD",
+			payment_gateway_account="_Test Gateway - USD - _TC",
 		)
 
 		self.assertEqual(pr.reference_doctype, "Sales Invoice")
@@ -130,7 +137,7 @@ class TestPaymentRequest(IntegrationTestCase):
 		pr = make_payment_request(
 			dt="Sales Order",
 			dn=so.name,
-			payment_gateway_account="_Test Gateway Other - USD",
+			payment_gateway_account="_Test Gateway Other - USD - _TC",
 			submit_doc=True,
 			return_doc=True,
 		)
@@ -145,7 +152,7 @@ class TestPaymentRequest(IntegrationTestCase):
 		pr = make_payment_request(
 			dt="Sales Order",
 			dn=so.name,
-			payment_gateway_account="_Test Gateway - USD",  # email channel
+			payment_gateway_account="_Test Gateway - USD - _TC",  # email channel
 			submit_doc=False,
 			return_doc=True,
 		)
@@ -163,7 +170,7 @@ class TestPaymentRequest(IntegrationTestCase):
 		pr = make_payment_request(
 			dt="Sales Order",
 			dn=so.name,
-			payment_gateway_account="_Test Gateway Phone - USD",
+			payment_gateway_account="_Test Gateway Phone - USD - _TC",
 			submit_doc=True,
 			return_doc=True,
 		)
@@ -180,7 +187,7 @@ class TestPaymentRequest(IntegrationTestCase):
 		pr = make_payment_request(
 			dt="Sales Order",
 			dn=so.name,
-			payment_gateway_account="_Test Gateway - USD",  # email channel
+			payment_gateway_account="_Test Gateway - USD - _TC",  # email channel
 			submit_doc=True,
 			return_doc=True,
 		)
@@ -201,7 +208,7 @@ class TestPaymentRequest(IntegrationTestCase):
 		pr = make_payment_request(
 			dt="Sales Order",
 			dn=so.name,
-			payment_gateway_account="_Test Gateway - USD",  # email channel
+			payment_gateway_account="_Test Gateway - USD - _TC",  # email channel
 			make_sales_invoice=True,
 			mute_email=True,
 			submit_doc=True,
@@ -232,7 +239,7 @@ class TestPaymentRequest(IntegrationTestCase):
 			party="_Test Supplier USD",
 			recipient_id="user@example.com",
 			mute_email=1,
-			payment_gateway_account="_Test Gateway - USD",
+			payment_gateway_account="_Test Gateway - USD - _TC",
 			submit_doc=1,
 			return_doc=1,
 		)
@@ -257,7 +264,7 @@ class TestPaymentRequest(IntegrationTestCase):
 			dn=purchase_invoice.name,
 			recipient_id="user@example.com",
 			mute_email=1,
-			payment_gateway_account="_Test Gateway - USD",
+			payment_gateway_account="_Test Gateway - USD - _TC",
 			return_doc=1,
 		)
 
@@ -276,7 +283,7 @@ class TestPaymentRequest(IntegrationTestCase):
 			dn=purchase_invoice.name,
 			recipient_id="user@example.com",
 			mute_email=1,
-			payment_gateway_account="_Test Gateway - USD",
+			payment_gateway_account="_Test Gateway - USD - _TC",
 			return_doc=1,
 		)
 
@@ -300,7 +307,7 @@ class TestPaymentRequest(IntegrationTestCase):
 			dn=so_inr.name,
 			recipient_id="saurabh@erpnext.com",
 			mute_email=1,
-			payment_gateway_account="_Test Gateway - INR",
+			payment_gateway_account="_Test Gateway - INR - _TC",
 			submit_doc=1,
 			return_doc=1,
 		)
@@ -322,7 +329,7 @@ class TestPaymentRequest(IntegrationTestCase):
 			dn=si_usd.name,
 			recipient_id="saurabh@erpnext.com",
 			mute_email=1,
-			payment_gateway_account="_Test Gateway - USD",
+			payment_gateway_account="_Test Gateway - USD - _TC",
 			submit_doc=1,
 			return_doc=1,
 		)
@@ -366,7 +373,7 @@ class TestPaymentRequest(IntegrationTestCase):
 			dn=si_usd.name,
 			recipient_id="saurabh@erpnext.com",
 			mute_email=1,
-			payment_gateway_account="_Test Gateway - USD",
+			payment_gateway_account="_Test Gateway - USD - _TC",
 			submit_doc=1,
 			return_doc=1,
 		)
@@ -471,7 +478,7 @@ class TestPaymentRequest(IntegrationTestCase):
 
 		self.assertEqual(pe.paid_amount, 800)  # paid amount set from pr's outstanding amount
 		self.assertEqual(pe.references[0].allocated_amount, 800)
-		self.assertEqual(pe.references[0].outstanding_amount, 800)  # for Orders it is not zero
+		self.assertEqual(pe.references[0].outstanding_amount, 0)  # Also for orders it will zero
 		self.assertEqual(pe.references[0].payment_request, pr.name)
 
 		so.load_from_db()

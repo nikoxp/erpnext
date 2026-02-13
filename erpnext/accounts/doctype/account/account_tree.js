@@ -70,6 +70,7 @@ frappe.treeview_settings["Account"] = {
 					args: {
 						accounts: accounts,
 						company: cur_tree.args.company,
+						include_default_fb_balances: true,
 					},
 				});
 
@@ -161,6 +162,14 @@ frappe.treeview_settings["Account"] = {
 			description: __("Optional. This setting will be used to filter in various transactions."),
 		},
 		{
+			fieldtype: "Link",
+			fieldname: "account_category",
+			label: __("Account Category"),
+			options: frappe.get_meta("Account").fields.filter((d) => d.fieldname == "account_category")[0]
+				.options,
+			description: __("Optional. Used with Financial Report Template"),
+		},
+		{
 			fieldtype: "Float",
 			fieldname: "tax_rate",
 			label: __("Tax Rate"),
@@ -236,10 +245,6 @@ frappe.treeview_settings["Account"] = {
 							root_company,
 						]);
 					} else {
-						const node = treeview.tree.get_selected_node();
-						if (node.is_root) {
-							frappe.throw(__("Cannot create root account."));
-						}
 						treeview.new_node();
 					}
 				},
@@ -258,8 +263,7 @@ frappe.treeview_settings["Account"] = {
 					].treeview.page.fields_dict.root_company.get_value() ||
 						frappe.flags.ignore_root_company_validation) &&
 					node.expandable &&
-					!node.hide_add &&
-					!node.is_root
+					!node.hide_add
 				);
 			},
 			click: function () {

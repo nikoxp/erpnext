@@ -540,12 +540,8 @@ class TestPurchaseOrder(IntegrationTestCase):
 		self.assertRaises(frappe.ValidationError, pr.submit)
 		self.assertRaises(frappe.ValidationError, pi.submit)
 
+	@IntegrationTestCase.change_settings("Accounts Settings", {"automatically_fetch_payment_terms": 1})
 	def test_make_purchase_invoice_with_terms(self):
-		from erpnext.selling.doctype.sales_order.test_sales_order import (
-			automatically_fetch_payment_terms,
-		)
-
-		automatically_fetch_payment_terms()
 		po = create_purchase_order(do_not_save=True)
 
 		self.assertRaises(frappe.ValidationError, make_pi_from_po, po.name)
@@ -569,7 +565,6 @@ class TestPurchaseOrder(IntegrationTestCase):
 		self.assertEqual(getdate(pi.payment_schedule[0].due_date), getdate(po.transaction_date))
 		self.assertEqual(pi.payment_schedule[1].payment_amount, 2500.0)
 		self.assertEqual(getdate(pi.payment_schedule[1].due_date), add_days(getdate(po.transaction_date), 30))
-		automatically_fetch_payment_terms(enable=0)
 
 	def test_warehouse_company_validation(self):
 		from erpnext.stock.utils import InvalidWarehouseCompany
@@ -717,6 +712,7 @@ class TestPurchaseOrder(IntegrationTestCase):
 		)
 		self.assertEqual(due_date, "2023-03-31")
 
+	@IntegrationTestCase.change_settings("Accounts Settings", {"automatically_fetch_payment_terms": 0})
 	def test_terms_are_not_copied_if_automatically_fetch_payment_terms_is_unchecked(self):
 		po = create_purchase_order(do_not_save=1)
 		po.payment_terms_template = "_Test Payment Term Template"
@@ -808,8 +804,6 @@ class TestPurchaseOrder(IntegrationTestCase):
 
 		po_doc.reload()
 		self.assertEqual(po_doc.advance_paid, 5000)
-
-		from erpnext.buying.doctype.purchase_order.purchase_order import make_purchase_invoice
 
 		company_doc.book_advance_payments_in_separate_party_account = False
 		company_doc.save()
@@ -910,17 +904,15 @@ class TestPurchaseOrder(IntegrationTestCase):
 		bo.load_from_db()
 		self.assertEqual(bo.items[0].ordered_qty, 5)
 
+	@IntegrationTestCase.change_settings("Accounts Settings", {"automatically_fetch_payment_terms": 1})
 	def test_payment_terms_are_fetched_when_creating_purchase_invoice(self):
 		from erpnext.accounts.doctype.payment_entry.test_payment_entry import (
 			create_payment_terms_template,
 		)
 		from erpnext.accounts.doctype.purchase_invoice.test_purchase_invoice import make_purchase_invoice
 		from erpnext.selling.doctype.sales_order.test_sales_order import (
-			automatically_fetch_payment_terms,
 			compare_payment_schedules,
 		)
-
-		automatically_fetch_payment_terms()
 
 		po = create_purchase_order(qty=10, rate=100, do_not_save=1)
 		create_payment_terms_template()
@@ -934,8 +926,6 @@ class TestPurchaseOrder(IntegrationTestCase):
 
 		# self.assertEqual(po.payment_terms_template, pi.payment_terms_template)
 		compare_payment_schedules(self, po, pi)
-
-		automatically_fetch_payment_terms(enable=0)
 
 	def test_internal_transfer_flow(self):
 		from erpnext.accounts.doctype.cost_center.test_cost_center import create_cost_center
@@ -1103,9 +1093,9 @@ class TestPurchaseOrder(IntegrationTestCase):
 
 		# Test - 2: Subcontracted Quantity for the PO Items of each line item should be updated accordingly
 		po.reload()
-		self.assertEqual(po.items[0].subcontracted_quantity, 5)
-		self.assertEqual(po.items[1].subcontracted_quantity, 0)
-		self.assertEqual(po.items[2].subcontracted_quantity, 12.5)
+		self.assertEqual(po.items[0].subcontracted_qty, 5)
+		self.assertEqual(po.items[1].subcontracted_qty, 0)
+		self.assertEqual(po.items[2].subcontracted_qty, 12.5)
 
 		# Test - 3: Amount for both FG Item and its Service Item should be updated correctly based on change in Quantity
 		self.assertEqual(sco.items[0].amount, 2000)
@@ -1141,10 +1131,10 @@ class TestPurchaseOrder(IntegrationTestCase):
 
 		# Test - 8: Subcontracted Quantity for each PO Item should be subtracted if SCO gets cancelled
 		po.reload()
-		self.assertEqual(po.items[2].subcontracted_quantity, 25)
+		self.assertEqual(po.items[2].subcontracted_qty, 25)
 		sco.cancel()
 		po.reload()
-		self.assertEqual(po.items[2].subcontracted_quantity, 12.5)
+		self.assertEqual(po.items[2].subcontracted_qty, 12.5)
 
 		sco = make_subcontracting_order(po.name)
 		sco.save()
@@ -1337,6 +1327,55 @@ class TestPurchaseOrder(IntegrationTestCase):
 
 		pi = make_pi_from_po(po.name)
 		self.assertEqual(pi.items[0].qty, 50)
+
+	def test_multiple_advances_against_purchase_order_are_allocated_across_partial_purchase_invoices(self):
+		# step - 1: create PO
+		po = create_purchase_order(qty=10, rate=10)
+
+		# step - 2: create first partial advance payment
+		pe1 = get_payment_entry("Purchase Order", po.name, bank_account="_Test Bank - _TC")
+		pe1.reference_no = "1"
+		pe1.reference_date = nowdate()
+		pe1.paid_amount = 50
+		pe1.references[0].allocated_amount = 50
+		pe1.save(ignore_permissions=True).submit()
+
+		# check first advance paid against PO
+		po.reload()
+		self.assertEqual(po.advance_paid, 50)
+
+		# step - 3: create first PI for partial qty and allocate first advance
+		pi_1 = make_pi_from_po(po.name)
+		pi_1.update_stock = 1
+		pi_1.allocate_advances_automatically = 1
+		pi_1.items[0].qty = 5
+		pi_1.save(ignore_permissions=True).submit()
+
+		# step - 4: create second advance payment for remaining
+		pe2 = get_payment_entry("Purchase Order", po.name, bank_account="_Test Bank - _TC")
+		pe2.reference_no = "2"
+		pe2.reference_date = nowdate()
+		pe2.paid_amount = 50
+		pe2.references[0].allocated_amount = 50
+		pe2.save(ignore_permissions=True).submit()
+
+		# check second advance paid against PO
+		po.reload()
+		self.assertEqual(po.advance_paid, 100)
+
+		# step - 5: create second PI for remaining qty and allocate second advance
+		pi_2 = make_pi_from_po(po.name)
+		pi_2.update_stock = 1
+		pi_2.allocate_advances_automatically = 1
+		pi_2.save(ignore_permissions=True).submit()
+
+		# check PO and PI status
+		po.reload()
+		pi_1.reload()
+		pi_2.reload()
+		self.assertEqual(pi_1.status, "Paid")
+		self.assertEqual(pi_2.status, "Paid")
+		self.assertEqual(po.status, "Completed")
 
 
 def create_po_for_sc_testing():

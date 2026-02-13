@@ -6,6 +6,9 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt
 
+from erpnext.accounts.doctype.financial_report_template.financial_report_engine import (
+	FinancialReportEngine,
+)
 from erpnext.accounts.report.financial_statements import (
 	compute_growth_view_data,
 	get_columns,
@@ -16,6 +19,9 @@ from erpnext.accounts.report.financial_statements import (
 
 
 def execute(filters=None):
+	if filters and filters.report_template:
+		return FinancialReportEngine().execute(filters)
+
 	period_list = get_period_list(
 		filters.from_fiscal_year,
 		filters.to_fiscal_year,
@@ -226,11 +232,11 @@ def get_report_summary(
 
 
 def get_chart_data(filters, columns, asset, liability, equity, currency):
-	labels = [d.get("label") for d in columns[2:]]
+	labels = [d.get("label") for d in columns[4:]]
 
 	asset_data, liability_data, equity_data = [], [], []
 
-	for p in columns[2:]:
+	for p in columns[4:]:
 		if asset:
 			asset_data.append(asset[-2].get(p.get("fieldname")))
 		if liability:

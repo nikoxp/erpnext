@@ -6,7 +6,7 @@ import frappe
 from frappe import _, msgprint
 from frappe.model.document import Document
 from frappe.query_builder.custom import ConstantColumn
-from frappe.utils import cint, flt, fmt_money, get_link_to_form, getdate
+from frappe.utils import cint, flt, fmt_money, getdate
 from pypika import Order
 
 import erpnext
@@ -125,7 +125,7 @@ class BankClearance(Document):
 				)
 
 			msg += "</ul>"
-			frappe.throw(_(msg))
+			msgprint(_(msg))
 			return
 
 		if not entries_to_update:
@@ -134,16 +134,44 @@ class BankClearance(Document):
 
 		for d in entries_to_update:
 			if d.payment_document == "Sales Invoice":
-				frappe.db.set_value(
+				old_clearance_date = frappe.db.get_value(
 					"Sales Invoice Payment",
-					{"parent": d.payment_entry, "account": self.get("account"), "amount": [">", 0]},
+					{
+						"parent": d.payment_entry,
+						"account": self.account,
+						"amount": [">", 0],
+					},
 					"clearance_date",
-					d.clearance_date,
 				)
+				if d.clearance_date or old_clearance_date:
+					frappe.db.set_value(
+						"Sales Invoice Payment",
+						{"parent": d.payment_entry, "account": self.get("account"), "amount": [">", 0]},
+						"clearance_date",
+						d.clearance_date,
+					)
+					sales_invoice = frappe.get_lazy_doc("Sales Invoice", d.payment_entry)
+					sales_invoice.add_comment(
+						"Comment",
+						_("Clearance date changed from {0} to {1} via Bank Clearance Tool").format(
+							old_clearance_date, d.clearance_date
+						),
+					)
+
 			else:
-				# using db_set to trigger notification
 				payment_entry = frappe.get_lazy_doc(d.payment_document, d.payment_entry)
-				payment_entry.db_set("clearance_date", d.clearance_date)
+				old_clearance_date = payment_entry.clearance_date
+
+				if d.clearance_date or old_clearance_date:
+					# using db_set to trigger notification
+					payment_entry.db_set("clearance_date", d.clearance_date)
+
+					payment_entry.add_comment(
+						"Comment",
+						_("Clearance date changed from {0} to {1} via Bank Clearance Tool").format(
+							old_clearance_date, d.clearance_date
+						),
+					)
 
 		self.get_payment_entries()
 		msgprint(_("Clearance Date updated"))
@@ -155,8 +183,10 @@ def get_payment_entries_for_bank_clearance(
 	entries = []
 
 	condition = ""
+	pe_condition = ""
 	if not include_reconciled_entries:
 		condition = "and (clearance_date IS NULL or clearance_date='0000-00-00')"
+		pe_condition = "and (pe.clearance_date IS NULL or pe.clearance_date='0000-00-00')"
 
 	journal_entries = frappe.db.sql(
 		f"""
@@ -181,19 +211,20 @@ def get_payment_entries_for_bank_clearance(
 	payment_entries = frappe.db.sql(
 		f"""
 			select
-				"Payment Entry" as payment_document, name as payment_entry,
-				reference_no as cheque_number, reference_date as cheque_date,
-				if(paid_from=%(account)s, paid_amount + total_taxes_and_charges, 0) as credit,
-				if(paid_from=%(account)s, 0, received_amount + total_taxes_and_charges) as debit,
-				posting_date, ifnull(party,if(paid_from=%(account)s,paid_to,paid_from)) as against_account, clearance_date,
-				if(paid_to=%(account)s, paid_to_account_currency, paid_from_account_currency) as account_currency
-			from `tabPayment Entry`
+				"Payment Entry" as payment_document, pe.name as payment_entry,
+				pe.reference_no as cheque_number, pe.reference_date as cheque_date,
+				if(pe.paid_from=%(account)s, pe.paid_amount + if(pe.payment_type = 'Pay' and c.default_currency = pe.paid_from_account_currency, pe.base_total_taxes_and_charges, pe.total_taxes_and_charges) , 0) as credit,
+				if(pe.paid_from=%(account)s, 0, pe.received_amount + pe.total_taxes_and_charges) as debit,
+				pe.posting_date, ifnull(pe.party,if(pe.paid_from=%(account)s,pe.paid_to,pe.paid_from)) as against_account, pe.clearance_date,
+				if(pe.paid_to=%(account)s, pe.paid_to_account_currency, pe.paid_from_account_currency) as account_currency
+			from `tabPayment Entry` as pe
+			join `tabCompany` c on c.name = pe.company
 			where
-				(paid_from=%(account)s or paid_to=%(account)s) and docstatus=1
-				and posting_date >= %(from)s and posting_date <= %(to)s
-				{condition}
+				(pe.paid_from=%(account)s or pe.paid_to=%(account)s) and pe.docstatus=1
+				and pe.posting_date >= %(from)s and pe.posting_date <= %(to)s
+				{pe_condition}
 			order by
-				posting_date ASC, name DESC
+				pe.posting_date ASC, pe.name DESC
 		""",
 		{
 			"account": account,

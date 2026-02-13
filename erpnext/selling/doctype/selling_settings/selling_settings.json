@@ -11,21 +11,25 @@
   "customer_group",
   "column_break_4",
   "territory",
+  "item_price_tab",
   "item_price_settings_section",
   "selling_price_list",
   "maintain_same_rate_action",
   "role_to_override_stop_action",
   "column_break_15",
   "maintain_same_sales_rate",
+  "fallback_to_default_price_list",
   "editable_price_list_rate",
   "validate_selling_price",
   "editable_bundle_item_rates",
   "allow_negative_rates_for_items",
+  "transaction_tab",
   "sales_transactions_settings_section",
   "so_required",
   "dn_required",
   "sales_update_frequency",
   "blanket_order_allowance",
+  "enable_tracking_sales_commissions",
   "column_break_5",
   "allow_multiple_items",
   "allow_against_multiple_purchase_orders",
@@ -36,8 +40,16 @@
   "enable_cutoff_date_on_bulk_delivery_note_creation",
   "allow_zero_qty_in_quotation",
   "allow_zero_qty_in_sales_order",
+  "set_zero_rate_for_expired_batch",
+  "section_break_avhb",
+  "enable_utm",
   "experimental_section",
-  "use_server_side_reactivity"
+  "use_legacy_js_reactivity",
+  "subcontracting_inward_tab",
+  "section_break_zwh6",
+  "allow_delivery_of_overproduced_qty",
+  "column_break_mla9",
+  "deliver_scrap_items"
  ],
  "fields": [
   {
@@ -53,6 +65,7 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Default Customer Group",
+   "link_filters": "[[\"Customer Group\", \"is_group\", \"=\", 0]]",
    "options": "Customer Group"
   },
   {
@@ -86,7 +99,7 @@
    "options": "No\nYes"
   },
   {
-   "default": "Each Transaction",
+   "default": "Daily",
    "description": "How often should Project and Company be updated based on Sales Transactions?",
    "fieldname": "sales_update_frequency",
    "fieldtype": "Select",
@@ -218,12 +231,6 @@
    "label": "Experimental"
   },
   {
-   "default": "1",
-   "fieldname": "use_server_side_reactivity",
-   "fieldtype": "Check",
-   "label": "Use Server Side Reactivity"
-  },
-  {
    "default": "0",
    "description": "Allows users to submit Sales Orders with zero quantity. Useful when rates are fixed but the quantities are not. Eg. Rate Contracts.",
    "fieldname": "allow_zero_qty_in_sales_order",
@@ -236,15 +243,93 @@
    "fieldname": "allow_zero_qty_in_quotation",
    "fieldtype": "Check",
    "label": "Allow Quotation with Zero Quantity"
+  },
+  {
+   "fieldname": "section_break_zwh6",
+   "fieldtype": "Section Break",
+   "label": "Subcontracting Inward Settings"
+  },
+  {
+   "default": "0",
+   "description": "If enabled, system will allow user to deliver the entire quantity of the finished goods produced against the Subcontracting Inward Order. If disabled, system will allow delivery of only the ordered quantity.",
+   "fieldname": "allow_delivery_of_overproduced_qty",
+   "fieldtype": "Check",
+   "label": "Allow Delivery of Overproduced Qty"
+  },
+  {
+   "fieldname": "column_break_mla9",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "If enabled, the Scrap Item generated against a Finished Good will also be added in the Stock Entry when delivering that Finished Good.",
+   "fieldname": "deliver_scrap_items",
+   "fieldtype": "Check",
+   "label": "Deliver Scrap Items"
+  },
+  {
+   "fieldname": "item_price_tab",
+   "fieldtype": "Tab Break",
+   "label": "Item Price"
+  },
+  {
+   "fieldname": "transaction_tab",
+   "fieldtype": "Tab Break",
+   "label": "Transaction"
+  },
+  {
+   "fieldname": "subcontracting_inward_tab",
+   "fieldtype": "Tab Break",
+   "label": "Subcontracting Inward"
+  },
+  {
+   "default": "0",
+   "fieldname": "fallback_to_default_price_list",
+   "fieldtype": "Check",
+   "label": "Use Prices from Default Price List as Fallback"
+  },
+  {
+   "default": "0",
+   "fieldname": "use_legacy_js_reactivity",
+   "fieldtype": "Check",
+   "label": "Use Legacy (Client side) Reactivity"
+  },
+  {
+   "default": "0",
+   "description": "If enabled, system will set incoming rate as zero for stand-alone credit notes with expired batch item.",
+   "fieldname": "set_zero_rate_for_expired_batch",
+   "fieldtype": "Check",
+   "label": "Set Incoming Rate as Zero for Expired Batch"
+  },
+  {
+   "default": "0",
+   "description": "Manage sales partner's and sales team's commissions",
+   "fieldname": "enable_tracking_sales_commissions",
+   "fieldtype": "Check",
+   "label": "Enable tracking sales commissions"
+  },
+  {
+   "fieldname": "section_break_avhb",
+   "fieldtype": "Section Break",
+   "label": "Analytics"
+  },
+  {
+   "default": "0",
+   "description": "Enable Urchin Tracking Module parameters in Quotation, Sales Order, Sales Invoice, POS Invoice, Lead,  and Delivery Note.",
+   "documentation_url": "https://en.wikipedia.org/wiki/UTM_parameters",
+   "fieldname": "enable_utm",
+   "fieldtype": "Check",
+   "label": "Enable UTM"
   }
  ],
  "grid_page_length": 50,
+ "hide_toolbar": 1,
  "icon": "fa fa-cog",
  "idx": 1,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-05-06 15:23:14.332971",
+ "modified": "2026-02-12 10:38:34.605126",
  "modified_by": "Administrator",
  "module": "Selling",
  "name": "Selling Settings",

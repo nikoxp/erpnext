@@ -6,7 +6,6 @@ from frappe.model.naming import set_name_by_naming_series
 from frappe.permissions import (
 	add_user_permission,
 	get_doc_permissions,
-	has_permission,
 	remove_user_permission,
 )
 from frappe.utils import cstr, getdate, today, validate_email_address
@@ -254,7 +253,11 @@ def get_employee_email(employee_doc):
 	)
 
 
-def get_holiday_list_for_employee(employee, raise_exception=True):
+def get_holiday_list_for_employee(employee, raise_exception=True, as_on=None):
+	hrms_override = frappe.get_hooks("employee_holiday_list")
+
+	if hrms_override:
+		return frappe.get_attr(hrms_override[-1])(employee, raise_exception, as_on)
 	if employee:
 		holiday_list, company = frappe.get_cached_value("Employee", employee, ["holiday_list", "company"])
 	else:

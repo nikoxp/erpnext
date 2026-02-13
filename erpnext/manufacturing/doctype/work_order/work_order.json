@@ -8,23 +8,23 @@
  "engine": "InnoDB",
  "field_order": [
   "item",
-  "naming_series",
-  "status",
-  "production_item",
-  "item_name",
-  "image",
-  "bom_no",
-  "sales_order",
-  "column_break1",
   "company",
+  "naming_series",
+  "production_item",
+  "bom_no",
+  "column_break1",
   "qty",
-  "material_transferred_for_manufacturing",
-  "produced_qty",
-  "disassembled_qty",
-  "process_loss_qty",
-  "project",
+  "sales_order",
   "track_semi_finished_goods",
   "reserve_stock",
+  "section_break_vrpa",
+  "max_producible_qty",
+  "material_transferred_for_manufacturing",
+  "additional_transferred_qty",
+  "column_break_ezmq",
+  "produced_qty",
+  "process_loss_qty",
+  "disassembled_qty",
   "warehouses",
   "source_warehouse",
   "wip_warehouse",
@@ -59,22 +59,34 @@
   "column_break_24",
   "corrective_operation_cost",
   "total_operating_cost",
+  "more_info",
+  "production_item_info_section",
+  "image",
+  "item_name",
+  "stock_uom",
+  "column_break2",
+  "description",
   "serial_no_and_batch_for_finished_good_section",
   "has_serial_no",
   "has_batch_no",
   "column_break_18",
   "batch_size",
-  "more_info",
-  "description",
-  "stock_uom",
-  "column_break2",
-  "material_request",
-  "material_request_item",
-  "sales_order_item",
+  "reference_section",
+  "project",
+  "subcontracting_inward_order",
   "production_plan",
-  "production_plan_item",
+  "mps",
+  "material_request",
+  "column_break_xbhk",
+  "material_request_item",
+  "subcontracting_inward_order_item",
+  "sales_order_item",
   "production_plan_sub_assembly_item",
+  "production_plan_item",
   "product_bundle_item",
+  "section_break_ynih",
+  "status",
+  "column_break_cvuw",
   "amended_from",
   "connections_tab"
  ],
@@ -143,6 +155,7 @@
   {
    "fieldname": "bom_no",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "BOM No",
    "oldfieldname": "bom_no",
    "oldfieldtype": "Link",
@@ -151,6 +164,7 @@
   },
   {
    "default": "0",
+   "depends_on": "eval:!doc.subcontracting_inward_order",
    "fieldname": "allow_alternative_item",
    "fieldtype": "Check",
    "label": "Allow Alternative Item"
@@ -161,7 +175,8 @@
    "fieldname": "use_multi_level_bom",
    "fieldtype": "Check",
    "label": "Use Multi-Level BOM",
-   "print_hide": 1
+   "print_hide": 1,
+   "read_only_depends_on": "eval:doc.subcontracting_inward_order"
   },
   {
    "default": "0",
@@ -190,6 +205,7 @@
    "default": "1.0",
    "fieldname": "qty",
    "fieldtype": "Float",
+   "in_list_view": 1,
    "label": "Qty To Manufacture",
    "oldfieldname": "qty",
    "oldfieldtype": "Currency",
@@ -216,6 +232,7 @@
    "read_only": 1
   },
   {
+   "depends_on": "eval:!doc.subcontracting_inward_order",
    "fieldname": "sales_order",
    "fieldtype": "Link",
    "in_global_search": 1,
@@ -232,7 +249,7 @@
   },
   {
    "default": "0",
-   "depends_on": "skip_transfer",
+   "depends_on": "eval:doc.skip_transfer && !doc.subcontracting_inward_order",
    "fieldname": "from_wip_warehouse",
    "fieldtype": "Check",
    "label": "Backflush Raw Materials From Work-in-Progress Warehouse"
@@ -244,6 +261,7 @@
    "options": "fa fa-building"
   },
   {
+   "depends_on": "eval:!(doc.skip_transfer && doc.subcontracting_inward_order)",
    "description": "This is a location where operations are executed.",
    "fieldname": "wip_warehouse",
    "fieldtype": "Link",
@@ -256,7 +274,8 @@
    "fieldname": "fg_warehouse",
    "fieldtype": "Link",
    "label": "Target Warehouse",
-   "options": "Warehouse"
+   "options": "Warehouse",
+   "read_only_depends_on": "subcontracting_inward_order"
   },
   {
    "fieldname": "column_break_12",
@@ -415,11 +434,13 @@
    "width": "50%"
   },
   {
+   "depends_on": "eval:!doc.subcontracting_inward_order",
    "description": "Manufacture against Material Request",
    "fieldname": "material_request",
    "fieldtype": "Link",
    "label": "Material Request",
-   "options": "Material Request"
+   "options": "Material Request",
+   "read_only": 1
   },
   {
    "fieldname": "material_request_item",
@@ -492,7 +513,8 @@
    "fieldname": "source_warehouse",
    "fieldtype": "Link",
    "label": "Source Warehouse",
-   "options": "Warehouse"
+   "options": "Warehouse",
+   "read_only_depends_on": "eval:doc.subcontracting_inward_order"
   },
   {
    "description": "In Mins",
@@ -503,7 +525,7 @@
   },
   {
    "collapsible": 1,
-   "depends_on": "eval:!doc.__islocal",
+   "depends_on": "eval:!doc.__islocal && doc.track_semi_finished_goods === 0 && (doc.has_serial_no === 1 || doc.has_batch_no === 1)",
    "fieldname": "serial_no_and_batch_for_finished_good_section",
    "fieldtype": "Section Break",
    "label": "Finished Good Serial / Batch"
@@ -592,7 +614,8 @@
    "default": "0",
    "fieldname": "reserve_stock",
    "fieldtype": "Check",
-   "label": " Reserve Stock"
+   "label": "Reserve Stock",
+   "read_only_depends_on": "subcontracting_inward_order"
   },
   {
    "depends_on": "eval:doc.docstatus==1",
@@ -601,6 +624,78 @@
    "label": "Disassembled Qty",
    "no_copy": 1,
    "read_only": 1
+  },
+  {
+   "fieldname": "mps",
+   "fieldtype": "Link",
+   "label": "MPS",
+   "options": "Master Production Schedule",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.docstatus==1 && doc.skip_transfer==0",
+   "fieldname": "additional_transferred_qty",
+   "fieldtype": "Float",
+   "label": "Additional Transferred Qty",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "depends_on": "subcontracting_inward_order",
+   "fieldname": "subcontracting_inward_order",
+   "fieldtype": "Link",
+   "label": "Subcontracting Inward Order",
+   "options": "Subcontracting Inward Order",
+   "read_only": 1
+  },
+  {
+   "fieldname": "subcontracting_inward_order_item",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Subcontracting Inward Order Item",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_producible_qty",
+   "fieldtype": "Float",
+   "hidden": 1,
+   "label": "Max Producible Qty",
+   "no_copy": 1,
+   "non_negative": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_vrpa",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_ezmq",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_ynih",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "reference_section",
+   "fieldtype": "Section Break",
+   "label": "Reference"
+  },
+  {
+   "fieldname": "column_break_cvuw",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_xbhk",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "production_item_info_section",
+   "fieldtype": "Section Break",
+   "label": "Production Item Info"
   }
  ],
  "grid_page_length": 50,
@@ -609,7 +704,7 @@
  "image_field": "image",
  "is_submittable": 1,
  "links": [],
- "modified": "2025-06-21 00:55:45.916224",
+ "modified": "2026-02-06 17:53:11.295600",
  "modified_by": "Administrator",
  "module": "Manufacturing",
  "name": "Work Order",

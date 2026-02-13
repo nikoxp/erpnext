@@ -1249,14 +1249,12 @@ class TestPurchaseInvoice(IntegrationTestCase, StockTestMixin):
 		pi.submit()
 
 		pda1 = frappe.get_doc(
-			dict(
-				doctype="Process Deferred Accounting",
-				posting_date=nowdate(),
-				start_date="2019-01-01",
-				end_date="2019-03-31",
-				type="Expense",
-				company="_Test Company",
-			)
+			doctype="Process Deferred Accounting",
+			posting_date=nowdate(),
+			start_date="2019-01-01",
+			end_date="2019-03-31",
+			type="Expense",
+			company="_Test Company",
 		)
 
 		pda1.insert()
@@ -1374,7 +1372,7 @@ class TestPurchaseInvoice(IntegrationTestCase, StockTestMixin):
 		total_debit_amount = frappe.db.get_all(
 			"Journal Entry Account",
 			{"account": creditors_account, "docstatus": 1, "reference_name": pi.name},
-			"sum(debit) as amount",
+			[{"SUM": "debit", "as": "amount"}],
 			group_by="reference_name",
 		)[0].amount
 		self.assertEqual(flt(total_debit_amount, 2), 2500)
@@ -1456,7 +1454,7 @@ class TestPurchaseInvoice(IntegrationTestCase, StockTestMixin):
 		total_debit_amount = frappe.db.get_all(
 			"Journal Entry Account",
 			{"account": creditors_account, "docstatus": 1, "reference_name": pi_2.name},
-			"sum(debit) as amount",
+			[{"SUM": "debit", "as": "amount"}],
 			group_by="reference_name",
 		)[0].amount
 		self.assertEqual(flt(total_debit_amount, 2), 1500)
@@ -1500,6 +1498,8 @@ class TestPurchaseInvoice(IntegrationTestCase, StockTestMixin):
 	def test_purchase_invoice_advance_taxes(self):
 		from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
 
+		frappe.db.set_single_value("Accounts Settings", "merge_similar_account_heads", 1)
+
 		company = "_Test Company"
 
 		tds_account_args = {
@@ -1538,7 +1538,7 @@ class TestPurchaseInvoice(IntegrationTestCase, StockTestMixin):
 		# Create Payment Entry Against the order
 		payment_entry = get_payment_entry(dt="Purchase Order", dn=po.name)
 		payment_entry.paid_from = "Cash - _TC"
-		payment_entry.apply_tax_withholding_amount = 1
+		payment_entry.apply_tds = 1
 		payment_entry.tax_withholding_category = tax_withholding_category
 		payment_entry.save()
 		payment_entry.submit()
@@ -1591,12 +1591,26 @@ class TestPurchaseInvoice(IntegrationTestCase, StockTestMixin):
 			self.assertEqual(expected_gle[i][1], gle.amount)
 
 		payment_entry.load_from_db()
-		self.assertEqual(payment_entry.taxes[0].allocated_amount, 3000)
+		tax_allocated = sum(
+			[
+				entry.withholding_amount
+				for entry in payment_entry.get("tax_withholding_entries", [])
+				if entry.taxable_name
+			]
+		)
+		self.assertEqual(tax_allocated, 3000)
 
 		purchase_invoice.cancel()
 
 		payment_entry.load_from_db()
-		self.assertEqual(payment_entry.taxes[0].allocated_amount, 0)
+		tax_allocated = sum(
+			[
+				entry.withholding_amount
+				for entry in payment_entry.get("tax_withholding_entries", [])
+				if entry.taxable_name
+			]
+		)
+		self.assertEqual(tax_allocated, 0)
 
 	def test_purchase_gl_with_tax_withholding_tax(self):
 		company = "_Test Company"
@@ -1631,7 +1645,6 @@ class TestPurchaseInvoice(IntegrationTestCase, StockTestMixin):
 			do_not_submit=1,
 		)
 		pi.apply_tds = 1
-		pi.tax_withholding_category = tax_withholding_category
 		pi.save()
 		pi.submit()
 
@@ -2147,19 +2160,16 @@ class TestPurchaseInvoice(IntegrationTestCase, StockTestMixin):
 		rate = flt(sle.stock_value_difference) / flt(sle.actual_qty)
 		self.assertAlmostEqual(rate, 500)
 
+	@IntegrationTestCase.change_settings("Accounts Settings", {"automatically_fetch_payment_terms": 1})
 	def test_payment_allocation_for_payment_terms(self):
 		from erpnext.buying.doctype.purchase_order.test_purchase_order import (
 			create_pr_against_po,
 			create_purchase_order,
 		)
-		from erpnext.selling.doctype.sales_order.test_sales_order import (
-			automatically_fetch_payment_terms,
-		)
 		from erpnext.stock.doctype.purchase_receipt.purchase_receipt import (
 			make_purchase_invoice as make_pi_from_pr,
 		)
 
-		automatically_fetch_payment_terms()
 		frappe.db.set_value(
 			"Payment Terms Template",
 			"_Test Payment Term Template",
@@ -2185,7 +2195,6 @@ class TestPurchaseInvoice(IntegrationTestCase, StockTestMixin):
 		pi = make_pi_from_pr(pr.name)
 		self.assertEqual(pi.payment_schedule[0].payment_amount, 1000)
 
-		automatically_fetch_payment_terms(enable=0)
 		frappe.db.set_value(
 			"Payment Terms Template",
 			"_Test Payment Term Template",
@@ -2633,6 +2642,38 @@ class TestPurchaseInvoice(IntegrationTestCase, StockTestMixin):
 
 		frappe.db.set_single_value("Buying Settings", "maintain_same_rate", 1)
 
+	@IntegrationTestCase.change_settings(
+		"Buying Settings", {"maintain_same_rate": 0, "set_landed_cost_based_on_purchase_invoice_rate": 1}
+	)
+	def test_pr_status_rate_adjusted_from_pi(self):
+		pr = make_purchase_receipt(qty=5, rate=100)
+		pi = create_purchase_invoice_from_receipt(pr.name)
+		pi.submit()
+		pr.reload()
+
+		# Inital check
+		self.assertEqual(pr.status, "Completed")
+
+		pi.reload()
+		pi.cancel()
+		pi = create_purchase_invoice_from_receipt(pr.name)
+		pi.items[0].rate = 80
+		pi.submit()
+		pr.reload()
+
+		# Test 1 : Adjustment amount is negative
+		self.assertEqual(pr.status, "Completed")
+
+		pi.reload()
+		pi.cancel()
+		pi = create_purchase_invoice_from_receipt(pr.name)
+		pi.items[0].rate = 120
+		pi.submit()
+		pr.reload()
+
+		# Test 2 : Adjustment amount is positive
+		self.assertEqual(pr.status, "Completed")
+
 	def test_opening_invoice_rounding_adjustment_validation(self):
 		pi = make_purchase_invoice(do_not_save=1)
 		pi.items[0].rate = 99.98
@@ -2902,6 +2943,29 @@ class TestPurchaseInvoice(IntegrationTestCase, StockTestMixin):
 		pi.posting_date = add_days(today(), -1)
 		pi.save()
 		self.assertEqual(pi.discount_amount, discount_amount)
+
+	def test_returned_item_purchase_receipt(self):
+		from erpnext.accounts.doctype.purchase_invoice.purchase_invoice import (
+			make_purchase_receipt as make_purchase_receipt_from_pi,
+		)
+
+		item = create_item("_Test Returned Item Purchase Receipt", is_stock_item=1)
+
+		pi = make_purchase_invoice(item_code=item.name, qty=5, rate=100)
+
+		return_pi = make_purchase_invoice(
+			item_code=item.name,
+			is_return=1,
+			return_against=pi.name,
+			qty=-5,
+			do_not_submit=True,
+		)
+
+		return_pi.items[0].purchase_invoice_item = pi.items[0].name
+		return_pi.submit()
+
+		pr = make_purchase_receipt_from_pi(pi.name)
+		self.assertFalse(pr.items)
 
 
 def set_advance_flag(company, flag, default_account):

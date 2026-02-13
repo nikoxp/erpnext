@@ -1,3 +1,4 @@
+
 <div align="center">
     <a href="https://frappe.io/erpnext">
 	<img src="./erpnext/public/images/v16/erpnext.svg" alt="ERPNext Logo" height="80px" width="80xp"/>
@@ -133,7 +134,7 @@ To setup the repository locally follow the steps mentioned below:
 
 1. [Frappe School](https://school.frappe.io) - Learn Frappe Framework and ERPNext from the various courses by the maintainers or from the community.
 2. [Official documentation](https://docs.erpnext.com/) - Extensive documentation for ERPNext.
-3. [Discussion Forum](https://discuss.erpnext.com/) - Engage with community of ERPNext users and service providers.
+3. [Discussion Forum](https://discuss.frappe.io/c/erpnext/6) - Engage with community of ERPNext users and service providers.
 4. [Telegram Group](https://erpnext_public.t.me) - Get instant help from huge community of users.
 
 
